@@ -4,7 +4,7 @@
     "capabilities": ["desktop-widget"],
     "description": "A simple, customizable audio visualizer for your desktop. Requires cava.",
     "version": "1.0.0",
-    "author": "ernestowg",
+    "author": "ernestowgg",
     "type": "desktop",
     "component": "./CavaVisualizerTab.qml",
     "settings": "./CavaVisualizerSettings.qml",
