@@ -32,20 +32,13 @@ DesktopPluginComponent {
     // ---------------------------------------------------------------
     // Internal state
     // ---------------------------------------------------------------
-    property var barValues: []
+    property var  barValues: []
 
-    // True when every bar is below 1% — a small threshold because cava can
-    // linger at very low values between tracks rather than snapping to zero.
-    readonly property bool isSilent: {
-        if (barValues.length === 0) return true
-        for (let i = 0; i < barValues.length; i++) {
-            if (barValues[i] > 0.01) return false
-        }
-        return true
-    }
+    // Set directly inside the parse loop rather than computed as a
+    // binding — avoids a full array scan 60 times per second.
+    property bool isSilent: true
 
-    // isSilent going true starts the silence timer; going false cancels it immediately.
-    property bool fadedOut: true
+    property bool fadedOut:     true
     property bool hasPlayedOnce: false
     readonly property int silenceTimeout: (pluginData.silenceTimeout ?? 5) * 1000
 
@@ -74,9 +67,27 @@ DesktopPluginComponent {
     // Rebuilds and restarts cava whenever barCount, sensitivity, or
     // channels changes — these all affect the cava config file.
     // ---------------------------------------------------------------
-    // Stop cava — the rest of the chain happens in cavaProcess.onRunningChanged.
+    Timer {
+        id: rebuildTimer
+        interval: 50
+        repeat: false
+        onTriggered: {
+            if (cavaProcess.running) {
+                // Running normally — stop it; cavaProcess.onRunningChanged will
+                // start configWriter, which will restart cava with the new config.
+                cavaProcess.running = false
+            } else if (!configWriter.running) {
+                // Initial startup, or cava wasn't running for some reason —
+                // kick off configWriter directly.
+                configWriter.running = true
+            }
+            // If configWriter is already running, a rebuild is already in
+            // progress and cavaProcess will be started when it finishes.
+        }
+    }
+
     function rebuildConfig() {
-        cavaProcess.running = false
+        rebuildTimer.restart()
     }
 
     Process {
@@ -88,13 +99,14 @@ DesktopPluginComponent {
             "bars = "        + root.barCount   + "\n" +
             "framerate = 60\n" +
             "sensitivity = " + root.sensitivity + "\n" +
+            "channels = "    + root.channels   + "\n" +
             "\n" +
             "[output]\n" +
             "method = raw\n" +
+            "channels = "    + root.channels   + "\n" +
             "raw_target = /dev/stdout\n" +
             "data_format = ascii\n" +
             "ascii_max_range = 1000\n" +
-            "channels = "    + root.channels   + "\n" +
             "bar_delimiter = 59\n" +
             "frame_delimiter = 10\n" +
             "CAVAEOF"
@@ -110,8 +122,6 @@ DesktopPluginComponent {
         command: ["cava", "-p", "/tmp/.dankshell/cava-widget.cfg"]
         running: false
         onRunningChanged: {
-            // When cava stops (and it was stopped intentionally by rebuildConfig),
-            // write the new config. configWriter.onRunningChanged then restarts cava.
             if (!running && !configWriter.running) {
                 configWriter.running = true
             }
@@ -123,16 +133,24 @@ DesktopPluginComponent {
                 if (!line || line.length === 0) return
                 const parts = line.split(";")
                 const vals = []
+                let silent = true
                 for (let i = 0; i < parts.length; i++) {
                     const n = parseInt(parts[i], 10)
-                    if (!isNaN(n)) vals.push(Math.min(1.0, n / 1000.0))
+                    if (!isNaN(n)) {
+                        const v = Math.min(1.0, n / 1000.0)
+                        vals.push(v)
+                        if (v > 0.01) silent = false
+                    }
                 }
-                if (vals.length > 0) root.barValues = vals
+                if (vals.length > 0) {
+                    root.barValues = vals
+                    root.isSilent = silent
+                }
             }
         }
     }
 
-    Component.onCompleted:    Qt.callLater(() => { configWriter.running = true })
+    Component.onCompleted:    rebuildConfig()
     onBarCountChanged:        rebuildConfig()
     onSensitivityChanged:     rebuildConfig()
     onChannelsChanged:        rebuildConfig()
@@ -159,14 +177,20 @@ DesktopPluginComponent {
         readonly property real effectiveBarW: root.barWidth > 0
             ? root.barWidth
             : Math.max(1, (width  - (root.barCount - 1) * root.barSpacing) / root.barCount)
+
+        // barWidth doubles as the fixed dimension for vertical orientations (left/right),
+        // producing square bars when set. When 0, distribute height evenly.
         readonly property real effectiveBarH: root.barWidth > 0
             ? root.barWidth
             : Math.max(1, (height - (root.barCount - 1) * root.barSpacing) / root.barCount)
 
-
-        // ---- BOTTOM: bars grow upward from the bottom edge ----
+        // ---- BOTTOM / TOP / HORIZONTAL ----
+        // A single Repeater handles all three horizontal-axis orientations.
+        // The only difference is the y anchor of each bar.
         Row {
             visible: root.orientation === "bottom"
+                  || root.orientation === "top"
+                  || root.orientation === "horizontal"
             width:   parent.width
             height:  parent.height
             spacing: root.barSpacing
@@ -174,45 +198,33 @@ DesktopPluginComponent {
             Repeater {
                 model: root.barCount
                 delegate: Rectangle {
-                    required property int index
+                    required property int  index
                     readonly property real norm: root.barValues[index] ?? 0.0
+
                     width:  vis.effectiveBarW
                     height: Math.max(1, norm * vis.height)
-                    y:      vis.height - height
+                    y:      root.orientation === "bottom"     ? vis.height - height
+                          : root.orientation === "horizontal" ? vis.height / 2 - height / 2
+                          :                                     0
+
                     Behavior on height { SmoothedAnimation { velocity: vis.height * 4 } }
-                    radius:  2
-                    color:   root.barColor
-                    opacity: root.barOpacity * (0.85 + norm * 0.15)
+
+                    radius: 2
+                    // Encode brightness modulation in the alpha channel rather than
+                    // the item's opacity property. Items with a uniform opacity
+                    // property can be batched into a single draw call by the scene
+                    // graph; non-uniform per-item opacity values each force their own.
+                    color: Qt.rgba(root.barColor.r, root.barColor.g, root.barColor.b,
+                                   root.barOpacity * (0.85 + norm * 0.15))
                 }
             }
         }
 
-        // ---- TOP: bars grow downward from the top edge ----
-        Row {
-            visible: root.orientation === "top"
-            width:   parent.width
-            height:  parent.height
-            spacing: root.barSpacing
-
-            Repeater {
-                model: root.barCount
-                delegate: Rectangle {
-                    required property int index
-                    readonly property real norm: root.barValues[index] ?? 0.0
-                    width:  vis.effectiveBarW
-                    height: Math.max(1, norm * vis.height)
-                    y:      0
-                    Behavior on height { SmoothedAnimation { velocity: vis.height * 4 } }
-                    radius:  2
-                    color:   root.barColor
-                    opacity: root.barOpacity * (0.85 + norm * 0.15)
-                }
-            }
-        }
-
-        // ---- LEFT: bars grow rightward from the left edge ----
+        // ---- LEFT / RIGHT ----
+        // Bars grow horizontally; only the x anchor differs between the two.
         Column {
             visible: root.orientation === "left"
+                  || root.orientation === "right"
             width:   parent.width
             height:  parent.height
             spacing: root.barSpacing
@@ -220,61 +232,18 @@ DesktopPluginComponent {
             Repeater {
                 model: root.barCount
                 delegate: Rectangle {
-                    required property int index
+                    required property int  index
                     readonly property real norm: root.barValues[index] ?? 0.0
+
                     height: vis.effectiveBarH
                     width:  Math.max(1, norm * vis.width)
-                    x:      0
+                    x:      root.orientation === "right" ? vis.width - width : 0
+
                     Behavior on width { SmoothedAnimation { velocity: vis.width * 4 } }
-                    radius:  2
-                    color:   root.barColor
-                    opacity: root.barOpacity * (0.85 + norm * 0.15)
-                }
-            }
-        }
 
-        // ---- RIGHT: bars grow leftward from the right edge ----
-        Column {
-            visible: root.orientation === "right"
-            width:   parent.width
-            height:  parent.height
-            spacing: root.barSpacing
-
-            Repeater {
-                model: root.barCount
-                delegate: Rectangle {
-                    required property int index
-                    readonly property real norm: root.barValues[index] ?? 0.0
-                    height: vis.effectiveBarH
-                    width:  Math.max(1, norm * vis.width)
-                    x:      vis.width - width
-                    Behavior on width { SmoothedAnimation { velocity: vis.width * 4 } }
-                    radius:  2
-                    color:   root.barColor
-                    opacity: root.barOpacity * (0.85 + norm * 0.15)
-                }
-            }
-        }
-
-        // ---- HORIZONTAL: bars grow up and down from the vertical center ----
-        Row {
-            visible: root.orientation === "horizontal"
-            width:   parent.width
-            height:  parent.height
-            spacing: root.barSpacing
-
-            Repeater {
-                model: root.barCount
-                delegate: Rectangle {
-                    required property int index
-                    readonly property real norm: root.barValues[index] ?? 0.0
-                    width:  vis.effectiveBarW
-                    height: Math.max(1, norm * vis.height)
-                    y:      vis.height / 2 - height / 2
-                    Behavior on height { SmoothedAnimation { velocity: vis.height * 4 } }
-                    radius:  2
-                    color:   root.barColor
-                    opacity: root.barOpacity * (0.85 + norm * 0.15)
+                    radius: 2
+                    color: Qt.rgba(root.barColor.r, root.barColor.g, root.barColor.b,
+                                   root.barOpacity * (0.85 + norm * 0.15))
                 }
             }
         }

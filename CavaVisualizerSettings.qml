@@ -10,10 +10,11 @@ PluginSettings {
 
     SliderSetting {
         settingKey:   "barCount"
+        description:  I18n.tr("Stereo needs an even number.")
         label:        I18n.tr("Bar Count")
         defaultValue: 20
         minimum:      4
-        maximum:      64
+        maximum:      128
     }
 
     SliderSetting {
@@ -21,7 +22,7 @@ PluginSettings {
         label:        I18n.tr("Bar Spacing")
         defaultValue: 4
         minimum:      0
-        maximum:      16
+        maximum:      32
         unit:         "px"
     }
 
