@@ -45,7 +45,8 @@ PluginSettings {
             { label: I18n.tr("Bottom"), value: "bottom" },
             { label: I18n.tr("Top"),    value: "top" },
             { label: I18n.tr("Left"),   value: "left" },
-            { label: I18n.tr("Right"),  value: "right" }
+            { label: I18n.tr("Right"),  value: "right" },
+            { label: I18n.tr("Horizontal"), value: "horizontal" }
         ]
     }
 

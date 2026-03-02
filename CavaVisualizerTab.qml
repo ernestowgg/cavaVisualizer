@@ -163,6 +163,7 @@ DesktopPluginComponent {
             ? root.barWidth
             : Math.max(1, (height - (root.barCount - 1) * root.barSpacing) / root.barCount)
 
+
         // ---- BOTTOM: bars grow upward from the bottom edge ----
         Row {
             visible: root.orientation === "bottom"
@@ -248,6 +249,29 @@ DesktopPluginComponent {
                     width:  Math.max(1, norm * vis.width)
                     x:      vis.width - width
                     Behavior on width { SmoothedAnimation { velocity: vis.width * 4 } }
+                    radius:  2
+                    color:   root.barColor
+                    opacity: root.barOpacity * (0.85 + norm * 0.15)
+                }
+            }
+        }
+
+        // ---- HORIZONTAL: bars grow up and down from the vertical center ----
+        Row {
+            visible: root.orientation === "horizontal"
+            width:   parent.width
+            height:  parent.height
+            spacing: root.barSpacing
+
+            Repeater {
+                model: root.barCount
+                delegate: Rectangle {
+                    required property int index
+                    readonly property real norm: root.barValues[index] ?? 0.0
+                    width:  vis.effectiveBarW
+                    height: Math.max(1, norm * vis.height)
+                    y:      vis.height / 2 - height / 2
+                    Behavior on height { SmoothedAnimation { velocity: vis.height * 4 } }
                     radius:  2
                     color:   root.barColor
                     opacity: root.barOpacity * (0.85 + norm * 0.15)
