@@ -164,7 +164,7 @@ DesktopPluginComponent {
         anchors.fill: parent
         color:   Theme.surface
         opacity: root.bgOpacity
-        radius:  Theme.radius
+        radius:  Theme.cornerRadius
     }
 
     // ---------------------------------------------------------------
@@ -219,7 +219,8 @@ DesktopPluginComponent {
         Column {
             visible: root.vizMode === "bars"
                   && (root.orientation === "left"
-                   || root.orientation === "right")
+                   || root.orientation === "right"
+                   || root.orientation === "vertical")
             width:   parent.width
             height:  parent.height
             spacing: root.barSpacing
@@ -232,7 +233,9 @@ DesktopPluginComponent {
 
                     height: vis.effectiveBarH
                     width:  Math.max(1, norm * vis.width)
-                    x:      root.orientation === "right" ? vis.width - width : 0
+                    x:      root.orientation === "right"    ? vis.width - width
+                          : root.orientation === "vertical" ? vis.width / 2 - width / 2
+                          :                                   0
 
                     Behavior on width { SmoothedAnimation { velocity: vis.width * 4 } }
 
@@ -308,6 +311,11 @@ DesktopPluginComponent {
                         // Use the upper half; we'll mirror it below.
                         px = t * w
                         py = h / 2 - amp * (h / 2)
+                    } else if (orient === "vertical") {
+                        // Grows symmetrically outward from the vertical centre.
+                        // Use the left half; we'll mirror it below.
+                        px = w / 2 - amp * (w / 2)
+                        py = t * h
                     } else if (orient === "left") {
                         // Bands distributed top → bottom; amplitude grows rightward.
                         px = amp * w
@@ -363,13 +371,13 @@ DesktopPluginComponent {
                     // Upper half
                     drawSpline(points)
                     // Mirror for the lower half: reflect y around centre.
-                    const mirror = points.map(p => ({ x: p.x, y: h - p.y }))
+                    const mirrorH = points.map(p => ({ x: p.x, y: h - p.y }))
                     // Continue the path to close over the mirrored curve.
-                    for (let i = mirror.length - 2; i >= 0; i--) {
-                        const p0 = mirror[Math.min(mirror.length - 1, i + 2)]
-                        const p1 = mirror[i + 1]
-                        const p2 = mirror[i]
-                        const p3 = mirror[Math.max(0, i - 1)]
+                    for (let i = mirrorH.length - 2; i >= 0; i--) {
+                        const p0 = mirrorH[Math.min(mirrorH.length - 1, i + 2)]
+                        const p1 = mirrorH[i + 1]
+                        const p2 = mirrorH[i]
+                        const p3 = mirrorH[Math.max(0, i - 1)]
 
                         const cp1x = p1.x + (p2.x - p0.x) / 6
                         const cp1y = p1.y + (p2.y - p0.y) / 6
@@ -391,7 +399,50 @@ DesktopPluginComponent {
                             ctx.lineJoin    = "round"
                             ctx.lineCap     = "round"
                             ctx.stroke()
-                            drawSpline(mirror)
+                            drawSpline(mirrorH)
+                            ctx.stroke()
+                        }
+                    } else {
+                        ctx.strokeStyle = Qt.rgba(r, g, b, a)
+                        ctx.lineWidth   = root.curveLineWidth
+                        ctx.lineJoin    = "round"
+                        ctx.lineCap     = "round"
+                        ctx.stroke()
+                    }
+
+                } else if (orient === "vertical") {
+                    // Left half
+                    drawSpline(points)
+                    // Mirror for the right half: reflect x around centre.
+                    const mirrorV = points.map(p => ({ x: w - p.x, y: p.y }))
+                    // Continue the path backwards over the mirrored curve to close the shape.
+                    for (let i = mirrorV.length - 2; i >= 0; i--) {
+                        const p0 = mirrorV[Math.min(mirrorV.length - 1, i + 2)]
+                        const p1 = mirrorV[i + 1]
+                        const p2 = mirrorV[i]
+                        const p3 = mirrorV[Math.max(0, i - 1)]
+
+                        const cp1x = p1.x + (p2.x - p0.x) / 6
+                        const cp1y = p1.y + (p2.y - p0.y) / 6
+                        const cp2x = p2.x - (p3.x - p1.x) / 6
+                        const cp2y = p2.y - (p3.y - p1.y) / 6
+
+                        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y)
+                    }
+                    ctx.closePath()
+
+                    if (isFilled) {
+                        ctx.fillStyle = Qt.rgba(r, g, b, a)
+                        ctx.fill()
+                        // Stroke both curve edges on top of the fill.
+                        if (root.curveLineWidth > 0) {
+                            drawSpline(points)
+                            ctx.strokeStyle = Qt.rgba(r, g, b, a)
+                            ctx.lineWidth   = root.curveLineWidth
+                            ctx.lineJoin    = "round"
+                            ctx.lineCap     = "round"
+                            ctx.stroke()
+                            drawSpline(mirrorV)
                             ctx.stroke()
                         }
                     } else {

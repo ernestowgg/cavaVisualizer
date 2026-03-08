@@ -65,7 +65,7 @@ PluginSettings {
         visible:      vizModeSetting.value !== "bars"
         settingKey:   "curvePoints"
         label:        I18n.tr("Sample Points")
-        description:  I18n.tr("Number of frequency bands sampled for the curve.")
+        description:  I18n.tr("Number of frequency bands sampled for the curve. Stereo needs an even number.")
         defaultValue: 32
         minimum:      8
         maximum:      128
@@ -94,7 +94,8 @@ PluginSettings {
             { label: I18n.tr("Top"),        value: "top"        },
             { label: I18n.tr("Left"),       value: "left"       },
             { label: I18n.tr("Right"),      value: "right"      },
-            { label: I18n.tr("Horizontal"), value: "horizontal" }
+            { label: I18n.tr("Horizontal"), value: "horizontal" },
+            { label: I18n.tr("Vertical"),   value: "vertical"   }
         ]
     }
 
