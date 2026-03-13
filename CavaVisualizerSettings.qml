@@ -123,6 +123,22 @@ PluginSettings {
         ]
     }
 
+    StringSetting {
+        settingKey:   "lowerCutoffFreq"
+        label:        I18n.tr("Low Cutoff Frequency")
+        description:  I18n.tr("Lower bound of the frequency range analyzed by cava (1-19999 Hz).")
+        placeholder:  "50"
+        defaultValue: "50"
+    }
+
+    StringSetting {
+        settingKey:   "higherCutoffFreq"
+        label:        I18n.tr("High Cutoff Frequency")
+        description:  I18n.tr("Upper bound of the frequency range analyzed by cava (2-20000 Hz).")
+        placeholder:  "10000"
+        defaultValue: "10000"
+    }
+
     // ---------------------------------------------------------------
     // Appearance
     // ---------------------------------------------------------------

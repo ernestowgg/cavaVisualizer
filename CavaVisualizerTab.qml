@@ -18,6 +18,16 @@ DesktopPluginComponent {
     readonly property int    curveLineWidth: pluginData.curveLineWidth ?? 2
     readonly property int    sensitivity:   pluginData.sensitivity    ?? 100
     readonly property string channels:      pluginData.channels       ?? "mono"  // "mono" | "stereo"
+    readonly property int    lowerCutoffFreq: {
+        const n = Number(pluginData.lowerCutoffFreq ?? 50)
+        return Number.isFinite(n) ? Math.round(n) : 50
+    }
+    readonly property int    higherCutoffFreq: {
+        const n = Number(pluginData.higherCutoffFreq ?? 10000)
+        return Number.isFinite(n) ? Math.round(n) : 10000
+    }
+    readonly property int    effectiveLowCutoffFreq: Math.max(1, Math.min(lowerCutoffFreq, higherCutoffFreq - 1))
+    readonly property int    effectiveHighCutoffFreq: Math.min(20000, Math.max(higherCutoffFreq, effectiveLowCutoffFreq + 1))
     readonly property string orientation:   pluginData.orientation    ?? "bottom"
     readonly property real   bgOpacity:     (pluginData.bgOpacity     ?? 0) / 100
 
@@ -99,6 +109,9 @@ DesktopPluginComponent {
             "bars = "        + root.effectiveBars + "\n" +
             "framerate = 60\n" +
             "sensitivity = " + root.sensitivity   + "\n" +
+            "# previous defaults: lower_cutoff_freq = 50, higher_cutoff_freq = 10000\n" +
+            "lower_cutoff_freq = " + root.effectiveLowCutoffFreq + "\n" +
+            "higher_cutoff_freq = " + root.effectiveHighCutoffFreq + "\n" +
             "channels = "    + root.channels      + "\n" +
             "\n" +
             "[output]\n" +
@@ -154,6 +167,8 @@ DesktopPluginComponent {
     onEffectiveBarsChanged:     rebuildConfig()
     onSensitivityChanged:       rebuildConfig()
     onChannelsChanged:          rebuildConfig()
+    onLowerCutoffFreqChanged:   rebuildConfig()
+    onHigherCutoffFreqChanged:  rebuildConfig()
     // Switching mode may change effectiveBars, but also forces a repaint.
     onVizModeChanged:           rebuildConfig()
 
