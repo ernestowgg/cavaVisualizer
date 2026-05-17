@@ -31,6 +31,8 @@ DesktopPluginComponent {
         return Theme.primary
     }
 
+    readonly property bool useGradient: (pluginData.colorChoice ?? "primary") === "gradient"
+
     // In curve mode the "bar count" cava sees is controlled by curvePoints;
     // the barCount setting is only surfaced in the UI when vizMode === "bars".
     readonly property int effectiveBars: vizMode === "bars" ? barCount : curvePoints
@@ -69,20 +71,40 @@ DesktopPluginComponent {
     Behavior on opacity { NumberAnimation { duration: 1000; easing.type: Easing.InOutQuad } }
 
     // ---------------------------------------------------------------
-    // Config writer
+    // Config writer + cava process
     // Rebuilds and restarts cava whenever effectiveBars, sensitivity,
     // or channels changes — these all affect the cava config file.
+    //
+    // Restart loop protection: if cava fails to start (e.g. binary not
+    // found), the process exits immediately. Without a cap this creates
+    // a tight infinite loop. retryCount tracks consecutive fast exits;
+    // after maxRetries the widget gives up until the next settings change
+    // triggers a manual rebuildConfig().
     // ---------------------------------------------------------------
+    property int retryCount: 0
+    readonly property int maxRetries: 3
+
     Timer {
         id: rebuildTimer
         interval: 50
         repeat: false
         onTriggered: {
+            root.retryCount = 0          // intentional rebuild resets the cap
             if (cavaProcess.running) {
                 cavaProcess.running = false
             } else if (!configWriter.running) {
                 configWriter.running = true
             }
+        }
+    }
+
+    Timer {
+        id: retryTimer
+        interval: 2000
+        repeat: false
+        onTriggered: {
+            if (!configWriter.running && !cavaProcess.running)
+                configWriter.running = true
         }
     }
 
@@ -123,7 +145,11 @@ DesktopPluginComponent {
         running: false
         onRunningChanged: {
             if (!running && !configWriter.running) {
-                configWriter.running = true
+                if (root.retryCount < root.maxRetries) {
+                    root.retryCount++
+                    retryTimer.restart()
+                }
+                // else: give up silently; next rebuildConfig() resets the cap
             }
         }
 
@@ -211,6 +237,24 @@ DesktopPluginComponent {
                     radius: 2
                     color: Qt.rgba(root.barColor.r, root.barColor.g, root.barColor.b,
                                    root.fgOpacity * (0.85 + norm * 0.15))
+                    gradient: root.useGradient ? rowBarGrad : null
+
+                    Gradient {
+                        id: rowBarGrad
+                        orientation: Gradient.Vertical
+                        GradientStop {
+                            position: 0.0
+                            color: root.orientation === "top"
+                                ? Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, root.fgOpacity)
+                                : Qt.rgba(Theme.primary.r,   Theme.primary.g,   Theme.primary.b,   root.fgOpacity)
+                        }
+                        GradientStop {
+                            position: 1.0
+                            color: root.orientation === "top"
+                                ? Qt.rgba(Theme.primary.r,   Theme.primary.g,   Theme.primary.b,   root.fgOpacity)
+                                : Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, root.fgOpacity)
+                        }
+                    }
                 }
             }
         }
@@ -242,6 +286,24 @@ DesktopPluginComponent {
                     radius: 2
                     color: Qt.rgba(root.barColor.r, root.barColor.g, root.barColor.b,
                                    root.fgOpacity * (0.85 + norm * 0.15))
+                    gradient: root.useGradient ? colBarGrad : null
+
+                    Gradient {
+                        id: colBarGrad
+                        orientation: Gradient.Horizontal
+                        GradientStop {
+                            position: 0.0
+                            color: root.orientation === "left"
+                                ? Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, root.fgOpacity)
+                                : Qt.rgba(Theme.primary.r,   Theme.primary.g,   Theme.primary.b,   root.fgOpacity)
+                        }
+                        GradientStop {
+                            position: 1.0
+                            color: root.orientation === "left"
+                                ? Qt.rgba(Theme.primary.r,   Theme.primary.g,   Theme.primary.b,   root.fgOpacity)
+                                : Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, root.fgOpacity)
+                        }
+                    }
                 }
             }
         }
@@ -250,9 +312,6 @@ DesktopPluginComponent {
         // Drawn on a Canvas using a Catmull-Rom spline, which passes through
         // every data point — giving an accurate frequency envelope without the
         // jagged look of linear segments.
-        //
-        // Left/Right orientations fall back to bar mode because a horizontal
-        // spline through vertical frequency samples doesn't read well visually.
         Canvas {
             id: curveCanvas
 
@@ -264,18 +323,12 @@ DesktopPluginComponent {
             // Trigger a repaint every time new data arrives.
             Connections {
                 target: root
-                function onBarValuesChanged() {
-                    if (curveCanvas.visible) curveCanvas.requestPaint()
-                }
-                function onVizModeChanged() {
-                    if (curveCanvas.visible) curveCanvas.requestPaint()
-                }
-                function onBarColorChanged() {
-                    if (curveCanvas.visible) curveCanvas.requestPaint()
-                }
-                function onFgOpacityChanged() {
-                    if (curveCanvas.visible) curveCanvas.requestPaint()
-                }
+                function onBarValuesChanged()   { if (curveCanvas.visible) curveCanvas.requestPaint() }
+                function onVizModeChanged()     { if (curveCanvas.visible) curveCanvas.requestPaint() }
+                function onOrientationChanged() { if (curveCanvas.visible) curveCanvas.requestPaint() }
+                function onBarColorChanged()    { if (curveCanvas.visible) curveCanvas.requestPaint() }
+                function onFgOpacityChanged()   { if (curveCanvas.visible) curveCanvas.requestPaint() }
+                function onUseGradientChanged() { if (curveCanvas.visible) curveCanvas.requestPaint() }
             }
 
             onPaint: {
@@ -365,6 +418,32 @@ DesktopPluginComponent {
                 const b = root.barColor.b
                 const a = root.fgOpacity
 
+                // Build a linear gradient covering the canvas in the direction
+                // that matches the amplitude axis (or frequency axis for symmetric
+                // modes), primary at the tip/low-freq end, secondary at the base.
+                function makeGradient() {
+                    let grad
+                    const c1 = Qt.rgba(Theme.primary.r,   Theme.primary.g,   Theme.primary.b,   a)
+                    const c2 = Qt.rgba(Theme.secondary.r, Theme.secondary.g, Theme.secondary.b, a)
+                    if (orient === "top") {
+                        grad = ctx.createLinearGradient(0, h, 0, 0)  // bottom(tip)→top(base)
+                    } else if (orient === "left") {
+                        grad = ctx.createLinearGradient(w, 0, 0, 0)  // right(tip)→left(base)
+                    } else if (orient === "right") {
+                        grad = ctx.createLinearGradient(0, 0, w, 0)  // left(tip)→right(base)
+                    } else if (orient === "horizontal") {
+                        grad = ctx.createLinearGradient(0, 0, w, 0)  // left(low-freq)→right(high-freq)
+                    } else {
+                        grad = ctx.createLinearGradient(0, 0, 0, h)  // top(tip/low-freq)→bottom(base)
+                        // covers: bottom, vertical
+                    }
+                    grad.addColorStop(0, c1)
+                    grad.addColorStop(1, c2)
+                    return grad
+                }
+
+                const paintColor = root.useGradient ? makeGradient() : Qt.rgba(r, g, b, a)
+
                 const isFilled = root.vizMode === "curve-filled"
 
                 if (orient === "horizontal") {
@@ -389,12 +468,12 @@ DesktopPluginComponent {
                     ctx.closePath()
 
                     if (isFilled) {
-                        ctx.fillStyle = Qt.rgba(r, g, b, a)
+                        ctx.fillStyle = paintColor
                         ctx.fill()
                         // Stroke both curve edges on top of the fill.
                         if (root.curveLineWidth > 0) {
                             drawSpline(points)
-                            ctx.strokeStyle = Qt.rgba(r, g, b, a)
+                            ctx.strokeStyle = paintColor
                             ctx.lineWidth   = root.curveLineWidth
                             ctx.lineJoin    = "round"
                             ctx.lineCap     = "round"
@@ -403,7 +482,7 @@ DesktopPluginComponent {
                             ctx.stroke()
                         }
                     } else {
-                        ctx.strokeStyle = Qt.rgba(r, g, b, a)
+                        ctx.strokeStyle = paintColor
                         ctx.lineWidth   = root.curveLineWidth
                         ctx.lineJoin    = "round"
                         ctx.lineCap     = "round"
@@ -432,12 +511,12 @@ DesktopPluginComponent {
                     ctx.closePath()
 
                     if (isFilled) {
-                        ctx.fillStyle = Qt.rgba(r, g, b, a)
+                        ctx.fillStyle = paintColor
                         ctx.fill()
                         // Stroke both curve edges on top of the fill.
                         if (root.curveLineWidth > 0) {
                             drawSpline(points)
-                            ctx.strokeStyle = Qt.rgba(r, g, b, a)
+                            ctx.strokeStyle = paintColor
                             ctx.lineWidth   = root.curveLineWidth
                             ctx.lineJoin    = "round"
                             ctx.lineCap     = "round"
@@ -446,7 +525,7 @@ DesktopPluginComponent {
                             ctx.stroke()
                         }
                     } else {
-                        ctx.strokeStyle = Qt.rgba(r, g, b, a)
+                        ctx.strokeStyle = paintColor
                         ctx.lineWidth   = root.curveLineWidth
                         ctx.lineJoin    = "round"
                         ctx.lineCap     = "round"
@@ -468,12 +547,12 @@ DesktopPluginComponent {
                         ctx.lineTo(points[0].x,     baselineY)
                     }
                     ctx.closePath()
-                    ctx.fillStyle = Qt.rgba(r, g, b, a)
+                    ctx.fillStyle = paintColor
                     ctx.fill()
                     // Stroke the curve edge on top of the fill.
                     if (root.curveLineWidth > 0) {
                         drawSpline(points)
-                        ctx.strokeStyle = Qt.rgba(r, g, b, a)
+                        ctx.strokeStyle = paintColor
                         ctx.lineWidth   = root.curveLineWidth
                         ctx.lineJoin    = "round"
                         ctx.lineCap     = "round"
@@ -483,7 +562,7 @@ DesktopPluginComponent {
                 } else {
                     // Outline only.
                     drawSpline(points)
-                    ctx.strokeStyle = Qt.rgba(r, g, b, a)
+                    ctx.strokeStyle = paintColor
                     ctx.lineWidth   = root.curveLineWidth
                     ctx.lineJoin    = "round"
                     ctx.lineCap     = "round"
